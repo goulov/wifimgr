@@ -34,6 +34,7 @@ reads a profile from `SAVEDIR` (name of the file)
 `# ./wifimgr.sh stop`
 
 ## Dependencies:
-- awk
-- dhcpcd (easy to adapt to dhclient if preferred)
-- iproute2
+- `awk`
+- `dhcpcd` (easy to adapt to `dhclient` if preferred)
+- `iproute2`
+- `iw`
