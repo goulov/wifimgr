@@ -1,40 +1,76 @@
-# wifimgr - wifi manager script
-The goal is to have a very simple script to manage wifi, instead of very complicated solutions doing a lot of stuff I (and maybe others) don't need/want, and use it together with standard linux tools like `iproute2`.
+# wifimgr - WiFi manager script
 
-## usage:
+A very simple script to manage WiFi connections
 
-### setup
-set `IFACE` and `SAVEDIR` in the script
+---
 
-### help screen
-`# ./wifimgr.sh`
+## Dependencies
 
-### connect to a AP (once, doesn't save the profile)
-`# ./wifimgr.sh connect plain/wep/wpa SSID PASSWORD`
-
-supports open, wep, and wpa APs
-
-### save a profile for future use
-`# ./wifimgr.sh save PROFILE_NAME SSID PASSWORD`
-
-only works for wpa: saves a profile by creating a file named `PROFILE_NAME` in `SAVEDIR`
-
-### scan for wifi APs
-`# ./wifimgr.sh scan`
-
-### connect to a saved profile
-`# ./wifimgr.sh start PROFILE`
-
-reads a profile from `SAVEDIR` (name of the file)
-
-### status information for current link
-`# ./wifimgr.sh stat`
-
-### disconnect from a AP
-`# ./wifimgr.sh stop`
-
-## Dependencies:
 - `awk`
-- `dhcpcd` (easy to adapt to `dhclient` if preferred)
+- `dhcpcd`
 - `iproute2`
 - `iw`
+
+---
+
+## Scan for available networks
+
+`# ./wifimgr.sh scan`
+
+example output:
+```
+ Signal	 SSID                              	Enc	 Freq	 Ch	WPS
+------------------------------------------------------------------------------
+-65.00	 safenet2.4                        	WPA2	 2457	 10	Yes
+-76.00	 safenet5                          	WPA2	 5500	 100
+-81.00	 opennet                          	Open	 2462	 11
+```
+
+## Connect to an access point
+
+`# ./wifimgr.sh connect PROTOCOL SSID [PASSWORD]`
+
+connects to a network with the specified `SSID` and `PASSWORD`.
+
+`PROTOCOL` is either:
+- `plain` for open networks (without `PASSWORD`)
+- `wep` for WEP networks
+- `wpa` for WPA networks
+
+## Save the access point currently connected to, with the name PROFILE
+
+`# ./wifimgr.sh save PROFILE`
+
+saves the current connection obtained with `connect` and stores it with the name `PROFILE`
+(`connect` must be run first to be able to `save` a connection)
+
+## Start previously saved PROFILE
+
+`# ./wifimgr.sh start PROFILE`
+
+connects to a previously saved connection with the name `PROFILE`
+(`save` must be run first to be able to `start` a saved connection)
+
+## Stop wifimgr and disconnect from the access point
+
+`# ./wifimgr.sh stop`
+
+stops a connection (releases DHCP lease and kills `wpa_supplicant`)
+
+## Show connection status
+
+`# ./wifimgr.sh status`
+
+shows some information about the current connected access point
+
+## Show help
+
+`# ./wifimgr.sh help`
+
+---
+
+## Notes
+
+- the directory where the profiles are saved can be modified by changing the variable `$SAVEDIR` in `wifimgr.sh` (default `/etc/wifimgr/`)
+- `wifimgr` stores the WiFi SSIDs and passwords as plaintext files in the hard drive
+- `wifimgr` was written to handle systems with a single WiFi interface (by default it uses the first one reported by `iw`)

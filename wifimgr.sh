@@ -1,89 +1,106 @@
 #!/bin/bash
 
-IFACE="wlan0"
-SAVEDIR="/path"
+SAVEDIR="/etc/wifimgr/" # directory where the profiles will be stored
+PIDFILE="/tmp/wifimgr.pid" # pid file of wpa_supplicant
+CONNFILE="/tmp/wifimgrconn" # file with the current connection
 
 function usage {
-    echo -e "RUN AS R00T !";
-    echo -e "Options:";
-    echo -e "\t connect \"plain/wep/wpa\" \"SSID\" \"PASSWORD\"";
-    echo -e "\t save \"PROFILE_NAME\" \"SSID\" \"PASSWORD\"";
-    echo -e "\t scan";
-    echo -e "\t start \"PROFILE\"";
-    echo -e "\t stat";
-    echo -e "\t stop";
+    echo -e "options:"
+    echo -e "\t scan"
+    echo -e "\t connect \"plain/wep/wpa\" \"SSID\" [\"PASSWORD\"]"
+    echo -e "\t save \"PROFILE\""
+    echo -e "\t start \"PROFILE\""
+    echo -e "\t stop"
+    echo -e "\t status"
+    echo -e "\t help"
     exit
 }
 
-if [[ "$#" == 0 ]]; then
-    usage;
+# check if run as root
+if [[ $EUID != 0 ]]; then
+    echo "ERROR: must be run as root"
+    exit 1
 fi
 
-if [[ "$1" == "connect" ]]; then
-    if [[ "$#" == 4 ]]; then
-        if [[ "$2" == "wpa" ]]; then
-            ip link set $IFACE up;
-            wpa_supplicant -B -i $IFACE -c <(wpa_passphrase "$3" "$4");
-	        dhcpcd $IFACE;
-        elif [[ "$2" == "wep" ]]; then
-            ip link set $IFACE up;
-            iw dev $IFACE connect "$3" key "0:$4";
-	        dhcpcd $IFACE;
-        else
-            usage;
-        fi
-    elif [[ "$#" == 3 ]]; then
-        if [[ "$2" == "plain" ]]; then
-            ip link set $IFACE up;
-            iw dev $IFACE connect "$3";
-	        dhcpcd $IFACE;
-        else
-            usage;
-        fi
-    else
-        usage;
+# check dependencies
+dependencies=("ip" "iw" "dhcpcd" "awk")
+for dep in ${dependencies[@]}; do
+    if [[ ! `command -v $dep` ]]; then
+        echo "ERROR: dependency '$dep' not found"
+        exit 1
     fi
+done
 
-elif [[ "$1" == "save" ]]; then
-    if [[ "$#" == 4 ]]; then
+# grab the wifi interface name
+IFACE="`iw dev | awk '$1=="Interface"{print $2}'`"
+if [[ -z $IFACE ]]; then
+    echo "ERROR: could not find interface name"
+    exit 1
+fi
+
+# check if no arguments provided
+[[ $# == 0 ]] && usage
+
+# check if SAVEDIR path exists or create it
+[[ ! -d "$SAVEDIR" ]] && mkdir -p $SAVEDIR && chmod 700 $SAVEDIR
+
+# start interface
+ip link set $IFACE up
+
+case $1 in
+    connect)
+        case $2 in
+            plain)
+                [[ $# != 3 ]] && usage
+                CONN="network={\nssid=\"$3\"\nkey_mgmt=NONE\n}"
+                ;;
+            wep)
+                [[ $# != 4 ]] && usage
+                CONN="network={\nssid=\"$3\"\nkey_mgmt=NONE\nwep_key0=\"$4\"\nwep_tx_keyidx=0\n}"
+                ;;
+            wpa)
+                [[ $# != 4 ]] && usage
+                CONN="network={\nssid=\"$3\"\npsk=\"$4\"\n}"
+                ;;
+            *)
+                usage
+                ;;
+        esac
+        echo -e $CONN > $CONNFILE
+        wpa_supplicant -B -P $PIDFILE -i $IFACE -c $CONNFILE
+        dhcpcd $IFACE
+        exit
+        ;;
+
+    save)
+        [[ $# != 2 ]] && usage
+        if [[ ! -f $CONNFILE ]]; then
+            echo "ERROR: current profile not found, did you run 'connect' first?"
+            exit 1
+        fi
+        cp $CONNFILE $SAVEDIR/$2
+        exit
+        ;;
+
+    start)
+        [[ $# != 2 ]] && usage
         if [[ ! -f "$SAVEDIR/$2" ]]; then
-            wpa_passphrase "$3" "$4" >> "$SAVEDIR/$2";
-        else
-            echo "FILE ALREADY EXISTS !";
-            usage;
+            echo "ERROR: profile $2 not found, did you use 'save' to save the profile?"
+            exit 1
         fi
-    else
-        usage;
-    fi
+        wpa_supplicant -B -P $PIDFILE -i $IFACE -c "$SAVEDIR/$2"
+        dhcpcd $IFACE
+        exit
+        ;;
 
-elif [[ "$1" == "start" ]]; then
-    if [[ "$#" == 2 ]]; then
-        ip link set $IFACE up;
-	    wpa_supplicant -B -i $IFACE -c "$SAVEDIR/$2";
-	    #sleep 3s;
-	    dhcpcd $IFACE;
-    else
-        usage;
-    fi
+    status)
+        [[ $# != 1 ]] && usage
+        iw dev $IFACE link
+        exit
+        ;;
 
-elif [[ "$1" == "stat" ]]; then
-    if [[ "$#" == 1 ]]; then
-        iw dev $IFACE link;
-    else
-        usage;
-    fi
-
-elif [[ "$1" == "stop" ]]; then
-    if [[ "$#" == 1 ]]; then
-        dhcpcd -k $IFACE;
-        killall wpa_supplicant;
-        ip link set $IFACE down;
-    else
-        usage;
-    fi
-
-elif [[ "$1" == "scan" ]]; then
-    if [[ "$#" == 1 ]]; then
+    scan)
+        [[ $# != 1 ]] && usage
         AWKQ='BEGIN {
                 FS=":" # Everything except BSS is : separated.
             }
@@ -119,9 +136,7 @@ elif [[ "$1" == "scan" ]]; then
             $1 == "\tWPS" {
                 wifi[MAC]["wps"] = "Yes"
             }
-
             END {
-
                 fmt = "%s\t%-35s\t%s\t%s\t%s\t%s\n"
                 printf fmt, " Signal", " SSID", "Enc", " Freq", " Ch", "WPS"
                 printf "------------------------------------------------------------------------------\n"
@@ -131,13 +146,25 @@ elif [[ "$1" == "scan" ]]; then
                     printf fmt,  wifi[w]["sig"], wifi[w]["SSID"], wifi[w]["enc"], wifi[w]["wpa2"], wifi[w]["freq"], wifi[w]["channel"], wifi[w]["wps"]
                 }
             }'
-        ip link set $IFACE up;
-        iw dev wlan0 scan | awk "$AWKQ" | LC_ALL=C sort;
-    else
-        usage;
-    fi
+        iw dev $IFACE scan | awk "$AWKQ" | LC_ALL=C sort
+        exit
+        ;;
 
-else
-    usage;
-fi
+    stop)
+        [[ $# != 1 ]] && usage
+        [[ -f $PIDFILE ]] && kill `cat $PIDFILE`
+        dhcpcd -k $IFACE
+        [[ -f $CONNFILE ]] && rm $CONNFILE
+        exit
+        ;;
 
+    help)
+        usage
+        ;;
+
+    *)
+        echo "ERROR: unknown argument $1"
+        exit 1
+        ;;
+
+esac
